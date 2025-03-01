@@ -86,7 +86,7 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
             stopInventory(); // Stop any ongoing inventory operation
             if (reader != null && reader.isConnected()) {
                 reader.Events.removeEventsListener(eventHandler); // Remove event listener
-                reader.disconnect();
+
                 Log.d(TAG, "Reader disconnected successfully.");
             }
         } catch (InvalidUsageException | OperationFailureException e) {
@@ -100,8 +100,9 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
             if (AutoConnectDeviceTask != null && !AutoConnectDeviceTask.isCancelled()) {
                 AutoConnectDeviceTask.cancel(true); // Cancel the task
             }
-            stopInventory();
-            disconnect(); // Ensure the reader is disconnected first
+            handleTriggerPress(false); // stops the inventory
+
+
             if (readers != null) {
                 readerDevice = null;
                 reader = null;
@@ -272,6 +273,7 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
             if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.HANDHELD_TRIGGER_EVENT) {
                 if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED) {
                     new AsyncTask<Void, Void, Void>() {
+                        @SuppressLint("StaticFieldLeak")
                         @Override
                         protected Void doInBackground(Void... voids) {
                             handleTriggerPress(true);
@@ -327,8 +329,8 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
     @Override
     public void RFIDReaderDisappeared(ReaderDevice readerDevice) {
         Log.d(TAG, "RFIDReaderDisappeared " + readerDevice.getName());
-        if (readerDevice.getName().equals(reader.getHostName())) {
-            disconnect();
+//        if (readerDevice.getName().equals(reader.getHostName())) {
+//            disconnect();
             dispose();
         }
     }
