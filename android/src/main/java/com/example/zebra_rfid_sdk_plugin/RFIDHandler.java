@@ -5,9 +5,9 @@ import android.content.Context;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.ArrayMap;
 import android.util.Log;
 
-import com.zebra.rfid.api3.ACCESS_OPERATION_CODE;
 import com.zebra.rfid.api3.Antennas;
 import com.zebra.rfid.api3.ENUM_TRANSPORT;
 import com.zebra.rfid.api3.ENUM_TRIGGER_MODE;
@@ -239,49 +239,58 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
         @Override
         public void eventReadNotify(RfidReadEvents rfidReadEvents) {
             try {
-                // Start multi-tag location operation
-                if (!mIsMultiTagLocatingRunning) {
-                    reader.Actions.MultiTagLocate.perform();
-                    mIsMultiTagLocatingRunning = true;
-                    Log.d(TAG, "Multi-tag location started.");
-                }
-
-                // Get the tags with location information
-                TagData[] myTags = reader.Actions.getReadTags(100);
+                // Step 1: Perform an inventory operation to detect tags
+                TagData[] myTags = reader.Actions.getReadTags(100); // Fetch tags
                 if (myTags != null) {
-                    ArrayList<HashMap<String, Object>> datas = new ArrayList<>();
+                    ArrayMap<String, String> multiTagLocateTagMap = new ArrayMap<>();
 
-                    for (int index = 0; index < myTags.length; index++) {
-                        TagData tagData = myTags[index];
-                        Log.d(TAG, "Tag ID " + tagData.getTagID());
-                        Log.d(TAG, "Tag getOpCode " + tagData.getOpCode());
-                        Log.d(TAG, "Tag getOpStatus " + tagData.getOpStatus());
-
-                        if (tagData.getOpCode() == null || tagData.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ) {
-                            Base.RfidData data = new Base.RfidData();
-                            data.tagID = tagData.getTagID();
-                            data.antennaID = tagData.getAntennaID();
-                            data.peakRSSI = tagData.getPeakRSSI();
-                            data.opStatus = tagData.getOpStatus();
-                            data.allocatedSize = tagData.getTagIDAllocatedSize();
-                            data.lockData = tagData.getPermaLockData();
-
-                            // Check if the tag contains location information
-                            if (tagData.isContainsLocationInfo()) {
-                                data.relativeDistance = tagData.LocationInfo.getRelativeDistance();
-                                Log.d(TAG, "Relative Distance: " + data.relativeDistance);
-                            } else {
-                                data.relativeDistance = -1; // Default value if no location info is available
-                            }
-
-                            data.memoryBankData = tagData.getMemoryBankData();
-                            datas.add(transitionEntity(data));
-                        }
+                    // Step 2: Build the dynamic tag list
+                    for (TagData tagData : myTags) {
+                        String epc = tagData.getTagID();
+                        String rssi = String.valueOf(tagData.getPeakRSSI()); // Use peak RSSI as reference
+                        multiTagLocateTagMap.put(epc, rssi);
+                        Log.d(TAG, "Added EPC to Multi-Tag Locate list: " + epc + " with RSSI: " + rssi);
                     }
 
-                    // Send the processed tag data to Flutter
-                    if (datas.size() > 0) {
-                        new AsyncDataNotify().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, datas);
+                    // Step 3: Import the dynamic tag list into the reader
+                    reader.Actions.MultiTagLocate.purgeItemList(); // Clear existing list
+                    reader.Actions.MultiTagLocate.importItemList(multiTagLocateTagMap); // Import new list
+
+                    // Step 4: Start the Multi-Tag Locate operation
+                    if (!mIsMultiTagLocatingRunning) {
+                        reader.Actions.MultiTagLocate.perform();
+                        mIsMultiTagLocatingRunning = true;
+                        Log.d(TAG, "Multi-tag location started.");
+                    }
+
+                    // Step 5: Get the tags with Multi-Tag Locate information
+                    TagData[] locatedTags = reader.Actions.getMultiTagLocateTagInfo(100); // Fetch tag data
+                    if (locatedTags != null) {
+                        ArrayList<HashMap<String, Object>> datas = new ArrayList<>();
+
+                        for (TagData tagData : locatedTags) {
+                            if (tagData.isContainsMultiTagLocateInfo()) {
+                                Base.RfidData data = new Base.RfidData();
+                                data.tagID = tagData.getTagID();
+                                data.antennaID = tagData.getAntennaID();
+                                data.peakRSSI = tagData.getPeakRSSI();
+                                data.opStatus = tagData.getOpStatus();
+                                data.allocatedSize = tagData.getTagIDAllocatedSize();
+                                data.lockData = tagData.getPermaLockData();
+
+                                // Extract Multi-Tag Locate information
+                                data.relativeDistance = tagData.MultiTagLocateInfo.getRelativeDistance();
+                                Log.d(TAG, "Relative Distance: " + data.relativeDistance);
+
+                                data.memoryBankData = tagData.getMemoryBankData();
+                                datas.add(transitionEntity(data));
+                            }
+                        }
+
+                        // Step 6: Send the processed tag data to Flutter
+                        if (datas.size() > 0) {
+                            new AsyncDataNotify().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, datas);
+                        }
                     }
                 }
             } catch (InvalidUsageException | OperationFailureException e) {
