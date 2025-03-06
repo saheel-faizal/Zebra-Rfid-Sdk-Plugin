@@ -46,6 +46,7 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
     private AsyncTask<Void, Void, String> AutoConnectDeviceTask;
     private static Readers readers;
     private static ReaderDevice readerDevice;
+    public static volatile boolean mIsMultiTagLocatingRunning;
 
     private static RFIDReader reader;
     private int MAX_POWER = 270;
@@ -87,6 +88,7 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
             stopInventory(); // Stop any ongoing inventory operation
             if (reader != null && reader.isConnected()) {
                 reader.Events.removeEventsListener(eventHandler); // Remove event listener
+
                 Log.d(TAG, "Reader disconnected successfully.");
             }
         } catch (InvalidUsageException | OperationFailureException e) {
@@ -102,12 +104,12 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
             }
             handleTriggerPress(false); // stops the inventory
 
+
             if (readers != null) {
                 readerDevice = null;
                 reader = null;
                 readers.Dispose();
                 readers = null;
-                stopLocateTag();
                 HashMap<String, Object> map = new HashMap<>();
                 map.put("status", Base.ConnectionStatus.UnConnection.ordinal());
                 emit(Base.RfidEngineEvents.ConnectionStatus, map);
@@ -220,74 +222,71 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
         }
     }
 
-    // Method to start locating a specific tag
-    public void startLocateTag(String tagID) {
-        if (!isReaderConnected()) {
-            Log.e(TAG, "Reader is not connected");
-            return;
-        }
+    public ArrayList<ReaderDevice> getReadersList() {
+        ArrayList<ReaderDevice> readersListArray = new ArrayList<>();
         try {
-            // Perform the locate operation for the specified tag ID
-            reader.Actions.TagLocationing.Perform(tagID, null, null);
-            Log.d(TAG, "Locate operation started for tag: " + tagID);
-        } catch (InvalidUsageException | OperationFailureException e) {
+            if (readers != null) {
+                readersListArray = readers.GetAvailableRFIDReaderList();
+                return readersListArray;
+            }
+        } catch (InvalidUsageException e) {
             e.printStackTrace();
-            Log.e(TAG, "Error starting locate operation: " + e.getMessage());
         }
-    }
-
-    // Method to stop the locate operation
-    public void stopLocateTag() {
-        if (!isReaderConnected()) {
-            Log.e(TAG, "Reader is not connected");
-            return;
-        }
-        try {
-            // Stop the locate operation
-            reader.Actions.TagLocationing.stop();
-            Log.d(TAG, "Locate operation stopped");
-        } catch (InvalidUsageException | OperationFailureException e) {
-            e.printStackTrace();
-            Log.e(TAG, "Error stopping locate operation: " + e.getMessage());
-        }
+        return readersListArray;
     }
 
     public class IEventHandler implements RfidEventsListener {
         @Override
         public void eventReadNotify(RfidReadEvents rfidReadEvents) {
-            TagData[] myTags = reader.Actions.getReadTags(100);
-            if (myTags != null) {
-                ArrayList<HashMap<String, Object>> datas = new ArrayList<>();
-                for (int index = 0; index < myTags.length; index++) {
-                    TagData tagData = myTags[index];
-                    Log.d(TAG, "Tag ID " + tagData.getTagID());
-                    Log.d(TAG, "Tag getOpCode " + tagData.getOpCode());
-                    Log.d(TAG, "Tag getOpStatus " + tagData.getOpStatus());
+            try {
+                // Start multi-tag location operation
+                if (!mIsMultiTagLocatingRunning) {
+                    reader.Actions.MultiTagLocate.perform();
+                    mIsMultiTagLocatingRunning = true;
+                    Log.d(TAG, "Multi-tag location started.");
+                }
 
-                    if (tagData.getOpCode() == null || tagData.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ) {
-                        Base.RfidData data = new Base.RfidData();
-                        data.tagID = tagData.getTagID();
-                        startLocateTag(data.tagID);
-                        data.antennaID = tagData.getAntennaID();
-                        data.peakRSSI = tagData.getPeakRSSI();
-                        data.opStatus = tagData.getOpStatus();
-                        data.allocatedSize = tagData.getTagIDAllocatedSize();
-                        data.lockData = tagData.getPermaLockData();
+                // Get the tags with location information
+                TagData[] myTags = reader.Actions.getReadTags(100);
+                if (myTags != null) {
+                    ArrayList<HashMap<String, Object>> datas = new ArrayList<>();
 
-                        // Check if the tag contains location information
-                        if (tagData.isContainsLocationInfo()) {
-                            data.relativeDistance = tagData.LocationInfo.getRelativeDistance();
-                            Log.d(TAG, "Tag relative distance: " + data.relativeDistance);
+                    for (int index = 0; index < myTags.length; index++) {
+                        TagData tagData = myTags[index];
+                        Log.d(TAG, "Tag ID " + tagData.getTagID());
+                        Log.d(TAG, "Tag getOpCode " + tagData.getOpCode());
+                        Log.d(TAG, "Tag getOpStatus " + tagData.getOpStatus());
+
+                        if (tagData.getOpCode() == null || tagData.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ) {
+                            Base.RfidData data = new Base.RfidData();
+                            data.tagID = tagData.getTagID();
+                            data.antennaID = tagData.getAntennaID();
+                            data.peakRSSI = tagData.getPeakRSSI();
+                            data.opStatus = tagData.getOpStatus();
+                            data.allocatedSize = tagData.getTagIDAllocatedSize();
+                            data.lockData = tagData.getPermaLockData();
+
+                            // Check if the tag contains location information
+                            if (tagData.isContainsLocationInfo()) {
+                                data.relativeDistance = tagData.LocationInfo.getRelativeDistance();
+                                Log.d(TAG, "Relative Distance: " + data.relativeDistance);
+                            } else {
+                                data.relativeDistance = -1; // Default value if no location info is available
+                            }
+
+                            data.memoryBankData = tagData.getMemoryBankData();
+                            datas.add(transitionEntity(data));
                         }
+                    }
 
-                        data.memoryBankData = tagData.getMemoryBankData();
-                        datas.add(transitionEntity(data));
+                    // Send the processed tag data to Flutter
+                    if (datas.size() > 0) {
+                        new AsyncDataNotify().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, datas);
                     }
                 }
-
-                if (datas.size() > 0) {
-                    new AsyncDataNotify().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, datas);
-                }
+            } catch (InvalidUsageException | OperationFailureException e) {
+                e.printStackTrace();
+                Log.e(TAG, "Error in multi-tag location or tag read: " + e.getMessage());
             }
         }
 
@@ -353,7 +352,10 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
     @Override
     public void RFIDReaderDisappeared(ReaderDevice readerDevice) {
         Log.d(TAG, "RFIDReaderDisappeared " + readerDevice.getName());
-        dispose();
+//        if (readerDevice.getName().equals(reader.getHostName())) {
+//            disconnect();
+            dispose();
+        }
     }
 
     private class AsyncDataNotify extends AsyncTask<ArrayList<HashMap<String, Object>>, Void, Void> {
