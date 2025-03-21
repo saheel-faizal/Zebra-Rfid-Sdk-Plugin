@@ -365,7 +365,7 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
 //            disconnect();
             dispose();
         }
-    }
+
 
     private class AsyncDataNotify extends AsyncTask<ArrayList<HashMap<String, Object>>, Void, Void> {
         @Override
