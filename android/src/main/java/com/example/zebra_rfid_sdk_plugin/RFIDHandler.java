@@ -5,9 +5,9 @@ import android.content.Context;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.ArrayMap;
 import android.util.Log;
 
+import com.zebra.rfid.api3.ACCESS_OPERATION_CODE;
 import com.zebra.rfid.api3.Antennas;
 import com.zebra.rfid.api3.ENUM_TRANSPORT;
 import com.zebra.rfid.api3.ENUM_TRIGGER_MODE;
@@ -239,65 +239,70 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
         @Override
         public void eventReadNotify(RfidReadEvents rfidReadEvents) {
             try {
-                // Step 1: Perform an inventory operation to detect tags
-                TagData[] myTags = reader.Actions.getReadTags(100); // Fetch tags
+                TagData singleTag = rfidReadEvents.getReadEventData().tagData;
+
+                // 🔹 Send singleTag log to Telegram
+                StringBuilder singleTagLog = new StringBuilder();
+                singleTagLog.append("SingleTag Read:\n");
+                singleTagLog.append("TagID: ").append(singleTag.getTagID()).append("\n");
+                singleTagLog.append("AntennaID: ").append(singleTag.getAntennaID()).append("\n");
+                singleTagLog.append("RSSI: ").append(singleTag.getPeakRSSI()).append("\n");
+                singleTagLog.append("OpCode: ").append(singleTag.getOpCode()).append("\n");
+                singleTagLog.append("OpStatus: ").append(singleTag.getOpStatus()).append("\n");
+
+                if (singleTag.isContainsLocationInfo()) {
+                    singleTagLog.append("RelativeDistance: ")
+                            .append(singleTag.LocationInfo.getRelativeDistance()).append("\n");
+                }
+
+                TelegramLogger.sendLog(singleTagLog.toString());
+
+                TagData[] myTags = reader.Actions.getReadTags(100);
                 if (myTags != null) {
-                    ArrayMap<String, String> multiTagLocateTagMap = new ArrayMap<>();
-
-                    // Step 2: Build the dynamic tag list
+                    ArrayList<HashMap<String, Object>> datas = new ArrayList<>();
                     for (TagData tagData : myTags) {
-                        String epc = tagData.getTagID();
-                        String rssi = String.valueOf(tagData.getPeakRSSI()); // Use peak RSSI as reference
-                        multiTagLocateTagMap.put(epc, rssi);
-                        Log.d(TAG, "Added EPC to Multi-Tag Locate list: " + epc + " with RSSI: " + rssi);
-                    }
+                        Log.d(TAG, "Tag ID: " + tagData.getTagID());
+                        Log.d(TAG, "Tag OpCode: " + tagData.getOpCode());
+                        Log.d(TAG, "Tag OpStatus: " + tagData.getOpStatus());
 
-                    // Step 3: Import the dynamic tag list into the reader
-                    reader.Actions.MultiTagLocate.purgeItemList(); // Clear existing list
-                    reader.Actions.MultiTagLocate.importItemList(multiTagLocateTagMap); // Import new list
+                        StringBuilder tagLog = new StringBuilder();
+                        tagLog.append("Tag Read:\n");
+                        tagLog.append("TagID: ").append(tagData.getTagID()).append("\n");
+                        tagLog.append("AntennaID: ").append(tagData.getAntennaID()).append("\n");
+                        tagLog.append("RSSI: ").append(tagData.getPeakRSSI()).append("\n");
+                        tagLog.append("OpCode: ").append(tagData.getOpCode()).append("\n");
+                        tagLog.append("OpStatus: ").append(tagData.getOpStatus()).append("\n");
 
-                    // Step 4: Start the Multi-Tag Locate operation
-                    if (!mIsMultiTagLocatingRunning) {
-                        reader.Actions.MultiTagLocate.perform();
-                        mIsMultiTagLocatingRunning = true;
-                        Log.d(TAG, "Multi-tag location started.");
-                    }
-
-                    // Step 5: Get the tags with Multi-Tag Locate information
-                    TagData[] locatedTags = reader.Actions.getMultiTagLocateTagInfo(100); // Fetch tag data
-                    if (locatedTags != null) {
-                        ArrayList<HashMap<String, Object>> datas = new ArrayList<>();
-
-                        for (TagData tagData : locatedTags) {
-                            if (tagData.isContainsMultiTagLocateInfo()) {
-                                Base.RfidData data = new Base.RfidData();
-                                data.tagID = tagData.getTagID();
-                                data.antennaID = tagData.getAntennaID();
-                                data.peakRSSI = tagData.getPeakRSSI();
-                                data.opStatus = tagData.getOpStatus();
-                                data.allocatedSize = tagData.getTagIDAllocatedSize();
-                                data.lockData = tagData.getPermaLockData();
-
-                                // Extract Multi-Tag Locate information
-                                data.relativeDistance = tagData.MultiTagLocateInfo.getRelativeDistance();
-                                Log.d(TAG, "Relative Distance: " + data.relativeDistance);
-
-                                data.memoryBankData = tagData.getMemoryBankData();
-                                datas.add(transitionEntity(data));
+                        if (tagData.getOpCode() == null || tagData.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ) {
+                            Base.RfidData data = new Base.RfidData();
+                            data.tagID = tagData.getTagID();
+                            data.antennaID = tagData.getAntennaID();
+                            data.peakRSSI = tagData.getPeakRSSI();
+                            data.opStatus = tagData.getOpStatus();
+                            data.allocatedSize = tagData.getTagIDAllocatedSize();
+                            data.lockData = tagData.getPermaLockData();
+                            if (tagData.isContainsLocationInfo()) {
+                                data.relativeDistance = tagData.LocationInfo.getRelativeDistance();
+                                tagLog.append("RelativeDistance: ").append(data.relativeDistance).append("\n");
                             }
+                            data.memoryBankData = tagData.getMemoryBankData();
+                            datas.add(transitionEntity(data));
                         }
 
-                        // Step 6: Send the processed tag data to Flutter
-                        if (datas.size() > 0) {
-                            new AsyncDataNotify().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, datas);
-                        }
+                        // 🔹 Send each tag to Telegram
+                        TelegramLogger.sendLog(tagLog.toString());
+                    }
+
+                    if (datas.size() > 0) {
+                        new AsyncDataNotify().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, datas);
                     }
                 }
-            } catch (InvalidUsageException | OperationFailureException e) {
-                e.printStackTrace();
-                Log.e(TAG, "Error in multi-tag location or tag read: " + e.getMessage());
+            } catch (Exception e) {
+                Log.e(TAG, "Error in eventReadNotify: " + e.getMessage());
+                TelegramLogger.sendLog("Error in eventReadNotify: " + e.getMessage());
             }
         }
+
 
         @Override
         public void eventStatusNotify(RfidStatusEvents rfidStatusEvents) {
@@ -361,10 +366,11 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
     @Override
     public void RFIDReaderDisappeared(ReaderDevice readerDevice) {
         Log.d(TAG, "RFIDReaderDisappeared " + readerDevice.getName());
-
+//        if (readerDevice.getName().equals(reader.getHostName())) {
+//            disconnect();
             dispose();
         }
-
+    }
 
     private class AsyncDataNotify extends AsyncTask<ArrayList<HashMap<String, Object>>, Void, Void> {
         @Override
