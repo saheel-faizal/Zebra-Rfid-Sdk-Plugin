@@ -361,8 +361,7 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
     @Override
     public void RFIDReaderDisappeared(ReaderDevice readerDevice) {
         Log.d(TAG, "RFIDReaderDisappeared " + readerDevice.getName());
-//        if (readerDevice.getName().equals(reader.getHostName())) {
-//            disconnect();
+
             dispose();
         }
 
