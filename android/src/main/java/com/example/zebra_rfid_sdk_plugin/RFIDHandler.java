@@ -382,9 +382,8 @@ public class RFIDHandler implements Readers.RFIDReaderEventHandler {
         }
     }
 
-public static HashMap<String, Object> transitionEntity(Object onClass) {
-    HashMap<String, Object> hashMap = new HashMap<>();
-    try {
+    public static HashMap<String, Object> transitionEntity(Object onClass) {
+        HashMap<String, Object> hashMap = new HashMap<>();
         Field[] fields = onClass.getClass().getDeclaredFields();
         for (Field field : fields) {
             field.setAccessible(true);
@@ -394,9 +393,6 @@ public static HashMap<String, Object> transitionEntity(Object onClass) {
                 e.printStackTrace();
             }
         }
-    } catch (Exception e) {
-        e.printStackTrace();
+        return hashMap;
     }
-    return hashMap;
-}
 }
