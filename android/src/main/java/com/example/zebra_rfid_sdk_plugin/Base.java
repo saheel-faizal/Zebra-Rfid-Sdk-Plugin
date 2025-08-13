@@ -35,7 +35,7 @@ public class Base {
         UnConnection,
 
         ///connection complete
-        ConnectionRealy,
+        ConnectionReady,
 
         ///connection error
         ConnectionError,
